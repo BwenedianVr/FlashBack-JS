@@ -1,4 +1,4 @@
-// Import the pako library for decompression (install via npm or link the CDN in the HTML)
+// Import the pako library for decompression
 import * as pako from 'pako';
 
 class SWFParser {
@@ -10,6 +10,304 @@ class SWFParser {
     this.sounds = []; // To store extracted sound data
     this.images = []; // Store extracted images
   }
+  function parseActionScript(swfData) {
+    let actions = [];
+    let abcData = [];
+    let offset = 0;
+
+    while (offset < swfData.length) {
+        let tagCodeAndLength = swfData.readUint16(offset);
+        let tagCode = tagCodeAndLength >> 6;
+        let tagLength = tagCodeAndLength & 0x3F;
+
+        if (tagLength === 0x3F) {
+            tagLength = swfData.readUint32(offset + 2);
+            offset += 6;
+        } else {
+            offset += 2;
+        }
+
+        let tagData = swfData.slice(offset, offset + tagLength);
+
+        if (tagCode === 12) { // DoAction (AS2)
+            let actionBytes = parseAS2(tagData);
+            actions.push(actionBytes);
+        } else if (tagCode === 82) { // DoABC (AS3)
+            let abcScript = parseAS3(tagData);
+            abcData.push(abcScript);
+        }
+
+        offset += tagLength;
+    }
+
+    sendToVM(actions, abcData);
+}
+
+function parseAS2(data) {
+    let result = [];
+    let offset = 0;
+
+    while (offset < data.length) {
+        let opcode = data[offset];
+        offset++;
+
+        switch (opcode) {
+            case 0x81: // GotoFrame
+                result.push(`GotoFrame ${data.readUint16(offset)}`);
+                offset += 2;
+                break;
+            case 0x83: // GetURL
+                let url = readString(data, offset);
+                offset += url.length + 1;
+                let target = readString(data, offset);
+                offset += target.length + 1;
+                result.push(`GetURL("${url}", "${target}")`);
+                break;
+            case 0x8F: // Wait
+                result.push(`Wait ${data.readUint16(offset)} ms`);
+                offset += 2;
+                break;
+            case 0xA0: // SetVariable
+                let variable = readString(data, offset);
+                offset += variable.length + 1;
+                let value = readValue(data, offset);
+                offset += value.length;
+                result.push(`SetVariable("${variable}", ${value})`);
+                break;
+            case 0x9B: // Push
+                result.push(`Push ${readValue(data, offset)}`);
+                offset += 2;
+                break;
+            case 0x96: // Pop
+                result.push("Pop");
+                break;
+            default:
+                result.push(`[Unknown AS2 Opcode: 0x${opcode.toString(16)}]`);
+                break;
+        }
+    }
+
+    return result;
+}
+
+function parseAS3(data) {
+    let decoder = new ABCDecoder(data);
+    return decoder.decode(); // Full decoding of AS3 bytecode
+}
+
+function sendToVM(as2, as3) {
+    if (as2.length > 0) {
+        console.log("Executing AS2:", as2);
+        AS3VM.executeAS2(as2);
+    }
+    if (as3.length > 0) {
+        console.log("Executing AS3:", as3);
+        AS3VM.executeAS3(as3);
+    }
+}
+
+function readString(data, offset) {
+    let str = "";
+    while (data[offset] !== 0) {
+        str += String.fromCharCode(data[offset]);
+        offset++;
+    }
+    return str;
+}
+
+function readValue(data, offset) {
+    let type = data[offset];
+    offset++;
+    switch (type) {
+        case 0x00: // Integer
+            return data.readInt16(offset);
+        case 0x01: // String
+            return `"${readString(data, offset)}"`;
+        case 0x02: // Float
+            return data.readFloat32(offset);
+        case 0x03: // Boolean
+            return data[offset] === 0 ? "false" : "true";
+        default:
+            return `[Unknown Type: 0x${type.toString(16)}]`;
+    }
+}
+
+// Enhanced ABCDecoder for Full AS3 Decoding
+class ABCDecoder {
+    constructor(data) {
+        this.data = data;
+        this.offset = 0;
+        this.constants = [];
+        this.methods = [];
+        this.classes = [];
+        this.traits = [];
+        this.namespaces = [];
+    }
+
+    decode() {
+        let magic = this.readUint32();
+        if (magic !== 0x58584243) {  // ABC Magic number
+            throw new Error("Invalid ABC file: Invalid magic number");
+        }
+
+        let minorVersion = this.readUint16();
+        let majorVersion = this.readUint16();
+        let constantPoolCount = this.readUint32();
+        this.constants = this.decodeConstants(constantPoolCount);
+
+        let methodCount = this.readUint32();
+        this.methods = this.decodeMethods(methodCount);
+
+        let classCount = this.readUint32();
+        this.classes = this.decodeClasses(classCount);
+
+        return {
+            constants: this.constants,
+            methods: this.methods,
+            classes: this.classes,
+            namespaces: this.namespaces,
+        };
+    }
+
+    decodeConstants(count) {
+        let constants = [];
+        for (let i = 0; i < count; i++) {
+            constants.push(this.readConstant());
+        }
+        return constants;
+    }
+
+    decodeMethods(count) {
+        let methods = [];
+        for (let i = 0; i < count; i++) {
+            methods.push(this.readMethod());
+        }
+        return methods;
+    }
+
+    decodeClasses(count) {
+        let classes = [];
+        for (let i = 0; i < count; i++) {
+            classes.push(this.readClass());
+        }
+        return classes;
+    }
+
+    readUint32() {
+        this.checkEOF(4);
+        let value = this.data.readUint32(this.offset);
+        this.offset += 4;
+        return value;
+    }
+
+    readUint16() {
+        this.checkEOF(2);
+        let value = this.data.readUint16(this.offset);
+        this.offset += 2;
+        return value;
+    }
+
+    readUint8() {
+        this.checkEOF(1);
+        let value = this.data.readUint8(this.offset);
+        this.offset += 1;
+        return value;
+    }
+
+    readConstant() {
+        let type = this.readUint8();
+        switch (type) {
+            case 0x01: // String
+                return this.readString();
+            case 0x02: // Integer
+                return this.readInt();
+            case 0x03: // Float
+                return this.readFloat();
+            case 0x04: // Double
+                return this.readDouble();
+            case 0x05: // Boolean
+                return this.readBoolean();
+            case 0x06: // Null
+                return null;
+            case 0x07: // Undefined
+                return undefined;
+            default:
+                throw new Error(`Unknown constant type: 0x${type.toString(16)}`);
+        }
+    }
+
+    readString() {
+        let length = this.readUint16();
+        let value = this.data.toString('utf8', this.offset, this.offset + length);
+        this.offset += length;
+        return value;
+    }
+
+    readInt() {
+        return this.readUint32();
+    }
+
+    readFloat() {
+        this.checkEOF(4);
+        let value = this.data.readFloat32(this.offset);
+        this.offset += 4;
+        return value;
+    }
+
+    readDouble() {
+        this.checkEOF(8);
+        let value = this.data.readDouble(this.offset);
+        this.offset += 8;
+        return value;
+    }
+
+    readBoolean() {
+        return this.readUint8() === 1;
+    }
+
+    readMethod() {
+        let length = this.readUint32();
+        return this.data.slice(this.offset, this.offset + length);
+    }
+
+    readClass() {
+        let className = this.readString();
+        let superClassName = this.readString();
+        let traitCount = this.readUint32();
+        let traits = [];
+        for (let i = 0; i < traitCount; i++) {
+            traits.push(this.readTrait());
+        }
+        return {
+            className,
+            superClassName,
+            traits
+        };
+    }
+
+    readTrait() {
+        let traitType = this.readUint8();
+        let name = this.readString();
+        let attributes = this.readUint8(); // Trait attributes (e.g., final, override, etc.)
+        return {
+            traitType,
+            name,
+            attributes
+        };
+    }
+
+    checkEOF(length) {
+        if (this.offset + length > this.data.length) {
+            throw new Error("Unexpected end of file (EOF) during ABC decoding");
+        }
+    }
+}
+
+function handleError(error) {
+    console.error("Parsing Error: ", error.message);
+    alert(`Error: ${error.message}`);
+}
+
 
   // Read a specific number of bytes from the SWF file (ArrayBuffer)
   readBytes(length) {

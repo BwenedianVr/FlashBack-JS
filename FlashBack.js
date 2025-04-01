@@ -1,3 +1,120 @@
+class SWFParser {
+  constructor(swfBuffer) {
+    this.buffer = swfBuffer;  // The SWF file as a byte buffer (ArrayBuffer)
+    this.offset = 0;           // Current position in the buffer
+    this.assets = {
+      sounds: [],
+      images: [],
+      videos: []
+    };
+    this.bytecode = [];
+  }
+
+  // Read a single byte from the buffer
+  readByte() {
+    return this.buffer[this.offset++];
+  }
+
+  // Read 2 bytes (little-endian)
+  readShort() {
+    const val = this.buffer[this.offset] | (this.buffer[this.offset + 1] << 8);
+    this.offset += 2;
+    return val;
+  }
+
+  // Read 4 bytes (little-endian)
+  readInt() {
+    const val = this.buffer[this.offset] | (this.buffer[this.offset + 1] << 8) | (this.buffer[this.offset + 2] << 16) | (this.buffer[this.offset + 3] << 24);
+    this.offset += 4;
+    return val;
+  }
+
+  // Read a string (length is provided by the SWF file)
+  readString() {
+    let result = '';
+    let char = this.readByte();
+    while (char !== 0) {
+      result += String.fromCharCode(char);
+      char = this.readByte();
+    }
+    return result;
+  }
+
+  // Parse the SWF header
+  parseHeader() {
+    // Read the SWF signature
+    const signature = this.readString();
+    if (signature !== 'FWS' && signature !== 'CWS') {
+      throw new Error('Invalid SWF file signature');
+    }
+
+    // Read the file length
+    const fileLength = this.readInt();
+    console.log('File Length:', fileLength);
+
+    // Read the SWF version
+    const version = this.readByte();
+    console.log('SWF Version:', version);
+  }
+
+  // Parse the tags in the SWF file
+  parseTags() {
+    let tag;
+    while (this.offset < this.buffer.length) {
+      tag = this.readShort();
+      const tagLength = this.readInt();
+      const tagData = this.buffer.slice(this.offset, this.offset + tagLength);
+      this.offset += tagLength;
+
+      // Process each tag type (this is where you'd add specific tag handling)
+      switch (tag) {
+        case 8:  // Image Tag (as an example)
+          this.assets.images.push(this.parseImageTag(tagData));
+          break;
+        case 43: // Sound Tag (as an example)
+          this.assets.sounds.push(this.parseSoundTag(tagData));
+          break;
+        default:
+          console.log(`Unknown tag type: ${tag}`);
+      }
+    }
+  }
+
+  // Parse a specific tag (e.g., an image)
+  parseImageTag(tagData) {
+    // This is just an example; you'd need to understand the format
+    return {
+      type: 'image',
+      data: tagData
+    };
+  }
+
+  // Parse a specific tag (e.g., a sound)
+  parseSoundTag(tagData) {
+    // This is just an example; you'd need to understand the format
+    return {
+      type: 'sound',
+      data: tagData
+    };
+  }
+
+  // Main function to parse the entire SWF file
+  parse() {
+    this.parseHeader();
+    this.parseTags();
+    console.log('Assets:', this.assets);
+  }
+}
+
+// Usage
+fetch('path_to_swf_file.swf')
+  .then(response => response.arrayBuffer())
+  .then(buffer => {
+    const parser = new SWFParser(new Uint8Array(buffer));
+    parser.parse();
+  })
+  .catch(error => console.error('Error parsing SWF:', error));
+
 class AS3VM {
   constructor() {
     this.stack = []; // Stack for holding values

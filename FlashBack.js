@@ -1,119 +1,128 @@
+// Import the pako library for decompression (install via npm or link the CDN in the HTML)
+import * as pako from 'pako';
+
 class SWFParser {
-  constructor(swfBuffer) {
-    this.buffer = swfBuffer;  // The SWF file as a byte buffer (ArrayBuffer)
-    this.offset = 0;           // Current position in the buffer
-    this.assets = {
-      sounds: [],
-      images: [],
-      videos: []
-    };
-    this.bytecode = [];
+  constructor(swfData) {
+    this.data = swfData; // SWF file as an ArrayBuffer
+    this.pointer = 0;
+    this.header = null;
+    this.tags = [];
+    this.sounds = []; // To store extracted sound data
   }
 
-  // Read a single byte from the buffer
-  readByte() {
-    return this.buffer[this.offset++];
+  // Read a specific number of bytes from the SWF file (ArrayBuffer)
+  readBytes(length) {
+    const bytes = new Uint8Array(this.data, this.pointer, length);
+    this.pointer += length;
+    return bytes;
   }
 
-  // Read 2 bytes (little-endian)
-  readShort() {
-    const val = this.buffer[this.offset] | (this.buffer[this.offset + 1] << 8);
-    this.offset += 2;
-    return val;
+  // Read a 32-bit integer (Big Endian)
+  readUInt32() {
+    const bytes = this.readBytes(4);
+    return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
   }
 
-  // Read 4 bytes (little-endian)
-  readInt() {
-    const val = this.buffer[this.offset] | (this.buffer[this.offset + 1] << 8) | (this.buffer[this.offset + 2] << 16) | (this.buffer[this.offset + 3] << 24);
-    this.offset += 4;
-    return val;
+  // Read a 16-bit integer (Big Endian)
+  readUInt16() {
+    const bytes = this.readBytes(2);
+    return (bytes[0] << 8) | bytes[1];
   }
 
-  // Read a string (length is provided by the SWF file)
+  // Read a string until the null byte (C-string)
   readString() {
     let result = '';
-    let char = this.readByte();
-    while (char !== 0) {
-      result += String.fromCharCode(char);
-      char = this.readByte();
+    let byte;
+    while ((byte = this.readBytes(1)[0]) !== 0) {
+      result += String.fromCharCode(byte);
     }
     return result;
   }
 
+  // Decompress a CWS (compressed SWF) file using pako
+  decompress() {
+    const compressedData = new Uint8Array(this.data, 8); // Remove header (first 8 bytes)
+    const decompressedData = pako.inflate(compressedData);
+    this.data = decompressedData.buffer; // Replace the original data with the decompressed one
+    this.pointer = 0; // Reset pointer to the start of the decompressed data
+  }
+
   // Parse the SWF header
   parseHeader() {
-    // Read the SWF signature
-    const signature = this.readString();
-    if (signature !== 'FWS' && signature !== 'CWS') {
-      throw new Error('Invalid SWF file signature');
+    const signature = this.readString();  // "FWS" or "CWS"
+    const version = this.readUInt8();
+    const fileLength = this.readUInt32();
+
+    this.header = {
+      signature,
+      version,
+      fileLength
+    };
+
+    // If it's a compressed SWF file, decompress it
+    if (signature === 'CWS') {
+      console.log('SWF file is compressed. Decompressing...');
+      this.decompress();
     }
-
-    // Read the file length
-    const fileLength = this.readInt();
-    console.log('File Length:', fileLength);
-
-    // Read the SWF version
-    const version = this.readByte();
-    console.log('SWF Version:', version);
   }
 
-  // Parse the tags in the SWF file
+  // Parse SWF tags
   parseTags() {
-    let tag;
-    while (this.offset < this.buffer.length) {
-      tag = this.readShort();
-      const tagLength = this.readInt();
-      const tagData = this.buffer.slice(this.offset, this.offset + tagLength);
-      this.offset += tagLength;
+    let tag = null;
 
-      // Process each tag type (this is where you'd add specific tag handling)
-      switch (tag) {
-        case 8:  // Image Tag (as an example)
-          this.assets.images.push(this.parseImageTag(tagData));
-          break;
-        case 43: // Sound Tag (as an example)
-          this.assets.sounds.push(this.parseSoundTag(tagData));
-          break;
-        default:
-          console.log(`Unknown tag type: ${tag}`);
+    while (this.pointer < this.data.byteLength) {
+      const tagHeader = this.readUInt16();
+      const tagType = tagHeader >> 6;
+      let tagLength = tagHeader & 0x3F;
+
+      if (tagLength === 0x3F) {
+        tagLength = this.readUInt32();
       }
+
+      // Handle different tag types
+      switch (tagType) {
+        case 0x01: // DefineShape
+          tag = this.readBytes(tagLength);
+          break;
+        case 0x04: // AudioStream (SoundStreamHead)
+          tag = this.readBytes(tagLength);
+          break;
+        case 0x14: // DefineSound
+          this.extractSound(tagLength);
+          break;
+        // Add more cases as needed for other tag types
+        default:
+          tag = this.readBytes(tagLength);
+          break;
+      }
+
+      this.tags.push({
+        tagType,
+        data: tag
+      });
     }
   }
 
-  // Parse a specific tag (e.g., an image)
-  parseImageTag(tagData) {
-    // This is just an example; you'd need to understand the format
-    return {
-      type: 'image',
-      data: tagData
-    };
+  // Extract sound data from DefineSound tag
+  extractSound(tagLength) {
+    const soundData = this.readBytes(tagLength);
+    this.sounds.push(soundData); // Store the sound data
+    console.log('Extracted sound data:', soundData);
   }
 
-  // Parse a specific tag (e.g., a sound)
-  parseSoundTag(tagData) {
-    // This is just an example; you'd need to understand the format
-    return {
-      type: 'sound',
-      data: tagData
-    };
-  }
-
-  // Main function to parse the entire SWF file
+  // Parse the entire SWF file
   parse() {
     this.parseHeader();
     this.parseTags();
-    console.log('Assets:', this.assets);
+  }
+
+  // Print parsed information
+  print() {
+    console.log('SWF Header:', this.header);
+    console.log('SWF Tags:', this.tags);
+    console.log('Extracted Sounds:', this.sounds);
   }
 }
-
-// Usage
-fetch('path_to_swf_file.swf')
-  .then(response => response.arrayBuffer())
-  .then(buffer => {
-    const parser = new SWFParser(new Uint8Array(buffer));
-    parser.parse();
-  })
-  .catch(error => console.error('Error parsing SWF:', error));
 
 class AS3VM {
   constructor() {

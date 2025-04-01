@@ -309,6 +309,51 @@ class AS3VM {
     this.videos[videoID] = videoData;
     console.log("Video loaded:", videoID);
   }
+  class AS3VM {
+  constructor() {
+    this.stack = [];
+  }
+
+  execute(bytecode) {
+    while (this.pc < bytecode.length) {
+      const op = bytecode[this.pc++];
+      switch (op) {
+        case 0x30: // Create a Timer
+          this.createTimer(bytecode);
+          break;
+        case 0x31: // Create an XML
+          this.createXML(bytecode);
+          break;
+        case 0x32: // Create FileReference
+          this.createFileReference(bytecode);
+          break;
+        // Add more opcodes as needed...
+      }
+    }
+  }
+
+  // Opcode 0x30: Create Timer
+  createTimer(bytecode) {
+    const delay = bytecode[this.pc++];
+    const repeatCount = bytecode[this.pc++];
+    const timer = new Timer(delay, repeatCount);
+    this.stack.push(timer);
+  }
+
+  // Opcode 0x31: Create XML
+  createXML(bytecode) {
+    const xmlString = bytecode[this.pc++];
+    const xml = new XML(xmlString);
+    this.stack.push(xml);
+  }
+
+  // Opcode 0x32: Create FileReference
+  createFileReference(bytecode) {
+    const fileRef = new FileReference();
+    this.stack.push(fileRef);
+  }
+}
+
 
   // Play video from stored video data (SWF Multimedia)
   playVideo(bytecode) {

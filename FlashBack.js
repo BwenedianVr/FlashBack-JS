@@ -8,6 +8,7 @@ class SWFParser {
     this.header = null;
     this.tags = [];
     this.sounds = []; // To store extracted sound data
+    this.images = []; // Store extracted images
   }
 
   // Read a specific number of bytes from the SWF file (ArrayBuffer)
@@ -94,6 +95,12 @@ class SWFParser {
         default:
           tag = this.readBytes(tagLength);
           break;
+        case 0x06: // DefineBits
+        case 0x21: // DefineBitsJPEG2
+        case 0x35: // DefineBitsJPEG3
+          this.extractImage(tagType, tagLength);
+          break;
+
       }
 
       this.tags.push({
@@ -109,6 +116,17 @@ class SWFParser {
     this.sounds.push(soundData); // Store the sound data
     console.log('Extracted sound data:', soundData);
   }
+  extractImage(tagType, tagLength) {
+    const imageData = this.readBytes(tagLength);
+    this.images.push({ tagType, data: imageData });
+    console.log('Extracted image:', imageData);
+}
+  function createImageFromData(imageData) {
+    const blob = new Blob([imageData], { type: 'image/jpeg' }); // Adjust based on format
+    return URL.createObjectURL(blob);
+}
+
+
 
   // Parse the entire SWF file
   parse() {
@@ -134,6 +152,40 @@ class AS3VM {
     this.images = {}; // Store images
     this.videos = {}; // Store videos
   }
+  loadFromSWF(swfParser) {
+        this.autoImplementImages(swfParser.images);
+        this.autoImplementSounds(swfParser.sounds);
+        this.autoImplementScripts(swfParser.scripts);
+    }
+
+    autoImplementImages(images) {
+        images.forEach((imageData, index) => {
+            const imgBlob = new Blob([imageData], { type: 'image/jpeg' }); 
+            const imgUrl = URL.createObjectURL(imgBlob);
+            this.images[`image_${index}`] = imgUrl;
+            console.log(`Loaded image_${index}`);
+        });
+    }
+
+    autoImplementSounds(sounds) {
+        sounds.forEach((soundData, index) => {
+            const soundBlob = new Blob([soundData], { type: 'audio/mpeg' }); 
+            const soundUrl = URL.createObjectURL(soundBlob);
+            this.sounds[`sound_${index}`] = soundUrl;
+            console.log(`Loaded sound_${index}`);
+        });
+    }
+
+    autoImplementScripts(scripts) {
+        scripts.forEach((script, index) => {
+            this.scripts.push(this.executeScript(script));
+            console.log(`Executed script_${index}`);
+        });
+    }
+
+    executeScript(script) {
+        return `// Fake execution: ${script.length} bytes of AS3 code`;
+    }
 
   // Main method to execute ActionScript bytecode
   execute(bytecode) {
@@ -465,6 +517,35 @@ class AS3VM {
     const timer = new Timer(delay, repeatCount);
     this.stack.push(timer);
   }
+    // Execute a 'for' loop
+  executeForLoop(bytecode) {
+    const start = this.stack.pop();  // Initial value
+    const condition = this.stack.pop();  // End condition
+    const increment = this.stack.pop();  // Step increment
+    const loopStart = this.pc;  // Loop start position
+
+    for (let i = start; i < condition; i += increment) {
+      this.pc = loopStart;
+      this.execute(bytecode); // Re-execute bytecode inside loop
+    }
+  }
+
+  // Execute a 'while' loop
+  executeWhileLoop(bytecode) {
+    const loopStart = this.pc; // Store loop start
+
+    while (this.stack.pop()) { // Condition check
+      this.pc = loopStart;
+      this.execute(bytecode); // Execute loop body
+    }
+  }
+    extractText(tagLength) {
+    const textData = this.readBytes(tagLength);
+    const decodedText = new TextDecoder("utf-8").decode(textData);
+    console.log('Extracted Text:', decodedText);
+  }
+
+
 
   // Opcode 0x31: Create XML
   createXML(bytecode) {
